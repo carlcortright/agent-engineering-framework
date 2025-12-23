@@ -1,0 +1,12 @@
+{
+  "name": "agent-oop",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "@langchain/core": "^1.1.8",
+    "@langchain/openai": "^1.2.0",
+    "langchain": "^1.2.3",
+    "tsx": "^4.21.0"
+  }
+}
