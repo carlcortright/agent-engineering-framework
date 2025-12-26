@@ -1,8 +1,8 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { z } from "zod";
 import { BaseAgent, Tool, Before } from "../../agent-interface";
-import { DirectoryAgent } from "./directory";
-import { FileAgent } from "./file";
+import { DirectoryAgent } from "../os/directory";
+import { FileAgent } from "../os/file";
 
 // ============================================================================
 // Hooks
