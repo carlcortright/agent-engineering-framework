@@ -317,7 +317,7 @@ const agent = new MyAgent(model);
 
 ## TODO
 
-- [ ] Agent state persistence 
+- [ ] Agent state persistence layer
 - [ ] Human-in-the-loop tooling
 
 ## License
