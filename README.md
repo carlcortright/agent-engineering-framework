@@ -1,6 +1,6 @@
 # Agent Engineering Framework
 
-A minimalistic framework for building composable, production-grade AI agents in TypeScript.
+A minimalistic, object-oriented framework for building composable, production-grade AI agents in TypeScript.
 
 ## The Problem
 
