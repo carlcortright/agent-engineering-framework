@@ -272,13 +272,19 @@ export class SeniorEngineerAgent extends Agent {
 ## File Structure
 
 ```
-agent-oop/
+agent-engineering-framework/
 ├── agent-interface.ts              # Core: Agent, @Tool, @Before, @After
 ├── examples/
-│   └── coding-agent/
-│       ├── file.ts                 # FileAgent — self-editing files
-│       ├── directory.ts            # DirectoryAgent — self-describing dirs
-│       └── senior-engineer.ts      # SeniorEngineerAgent — orchestrator
+│   ├── coding-agent/
+│   │   └── senior-engineer.ts      # SeniorEngineerAgent — orchestrator
+│   ├── os/
+│   │   ├── file.ts                 # FileAgent — self-editing files
+│   │   └── directory.ts            # DirectoryAgent — self-describing dirs
+│   ├── scraping-agent/
+│   │   ├── scraping-agent.ts
+│   │   └── webpage.ts
+│   ├── design-agent/
+│   └── pm-agent/
 ├── tsconfig.json
 └── package.json
 ```
