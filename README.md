@@ -21,29 +21,105 @@ Existing agent frameworks like LangChain, CrewAI, and others either:
 | `@Before` | Hook that runs before a tool executes (validation, logging, transformation). |
 | `@After` | Hook that runs after a tool executes (sanitization, formatting). |
 
-### BaseAgent
+### Agent
 
-All agents extend `BaseAgent`, which:
+All agents extend `Agent`, which:
 1. Takes a model in the constructor
 2. Auto-discovers `@Tool` decorated methods
 3. Wires them up as LangChain tools with hooks
 
+## Example: Self-Editing Codebase
+
+The key innovation in this framework is that **objects can edit themselves**. A file agent doesn't just represent a file—it *is* an agent that can rewrite its own content.
+
+```
+SeniorEngineerAgent (orchestrator)
+├── DirectoryAgent (root/)
+│   ├── FileAgent (index.ts) ← can edit itself
+│   ├── FileAgent (utils.ts) ← can edit itself
+│   └── DirectoryAgent (components/)
+│       └── FileAgent (Button.tsx) ← can edit itself
+```
+
+### FileAgent — Self-Editing Files
+
 ```typescript
-class MyAgent extends Agent {
-    @Tool({ name: "search", description: "Search docs", parameters: z.object({ q: z.string() }) })
-    @Before(validateInput)
-    @After(sanitizeOutput)
-    search({ q }: { q: string }) {
-        return db.search(q);
-    }
+export class FileAgent extends Agent {
+    path: string;
+    content: string;
+    summary: string = "";  // Self-description, auto-updated
 
-    @Tool({ name: "analyze", description: "Analyze data", parameters: z.object({ data: z.string() }) })
-    async analyze({ data }: { data: string }) {
-        return this.agent.invoke({ input: `Analyze: ${data}` } as any);
-    }
+    @Tool({
+        name: "edit",
+        description: "Edit the file using natural language instructions",
+        parameters: z.object({ instruction: z.string() }),
+    })
+    async edit({ instruction }: { instruction: string }) {
+        // Ask LLM to generate new content
+        const result = await this.agent.invoke({
+            input: `Edit "${this.path}": ${instruction}\n\nCurrent:\n${this.content}`
+        } as any);
 
-    async execute(input: string) {
-        return this.agent.invoke({ input } as any);
+        // Self-edit: update own content and persist to disk
+        this.content = String(result);
+        await fs.writeFile(this.path, this.content);
+        await this.updateSummary();
+
+        return { status: "self-edited", path: this.path };
+    }
+}
+```
+
+### DirectoryAgent — Self-Describing Directories
+
+Directories maintain summaries of their contents, so the orchestrator doesn't need to read every file:
+
+```typescript
+export class DirectoryAgent extends Agent {
+    files: Map<string, FileAgent> = new Map();
+    directories: Map<string, DirectoryAgent> = new Map();
+    summary: string = "";  // Aggregated from children
+
+    @Tool({
+        name: "editFile",
+        description: "Edit a file by name",
+        parameters: z.object({ name: z.string(), instruction: z.string() }),
+    })
+    async editFile({ name, instruction }) {
+        const file = this.files.get(name);
+        return file.edit({ instruction });  // Delegate to file's self-edit
+    }
+}
+```
+
+### SeniorEngineerAgent — The Orchestrator
+
+Uses self-descriptions to understand the codebase without reading everything:
+
+```typescript
+export class SeniorEngineerAgent extends Agent {
+    root: DirectoryAgent;
+
+    @Tool({
+        name: "implement",
+        description: "Implement a feature across the codebase",
+        parameters: z.object({ feature: z.string() }),
+    })
+    async implement({ feature }) {
+        // 1. Understand codebase via self-descriptions (not full content)
+        const context = this.root.getTree();
+
+        // 2. Plan which files to create/edit
+        const plan = await this.agent.invoke({
+            input: `Implement "${feature}"\n\nCodebase:\n${context}`
+        } as any);
+
+        // 3. Execute: files edit themselves
+        for (const step of plan.steps) {
+            if (step.action === "edit") {
+                await this.editFile({ path: step.path, instruction: step.description });
+            }
+        }
     }
 }
 ```
@@ -52,111 +128,80 @@ class MyAgent extends Agent {
 
 ```
 agent-oop/
-├── agent-interface.ts         # Core framework: BaseAgent, @Tool, @Before, @After
+├── agent-interface.ts              # Core: Agent, @Tool, @Before, @After
 ├── examples/
-│   ├── cypherpunk-library.ts  # Example: hierarchical agents (Library → Books → Pages)
-│   └── codebase.ts            # Example: coding agents (Files, Organizer, Quality, SuperCoder)
-├── tsconfig.json              # TypeScript config (experimentalDecorators enabled)
+│   └── coding-agent/
+│       ├── file.ts                 # FileAgent — self-editing files
+│       ├── directory.ts            # DirectoryAgent — self-describing dirs
+│       └── senior-engineer.ts      # SeniorEngineerAgent — orchestrator
+├── tsconfig.json
 └── package.json
 ```
 
-## Examples
-
-### Cypherpunk Library (`examples/cypherpunk-library.ts`)
-
-A hierarchical agent system modeling a library:
-
-```
-CypherpunkLibrary (orchestrator)
-├── LibrarianAgent[] (specialists with different focuses)
-└── BookAgent (Map<string, Book>)
-    └── PageAgent[] (individual pages)
-```
-
-**Capabilities:**
-- `searchAll` — Search across all books
-- `askLibrarian` — Route questions to specialist librarians
-- `addBook` — Create new books (with auth hooks)
-- Books can `summarize`, `search`, `writePage`
-- Pages can `write`, `edit`, `getContent`
-
-### Codebase (`examples/codebase.ts`)
-
-A coding agent system:
-
-```
-SuperCodingAgent (orchestrator)
-├── OrganizerAgent (file system operations)
-├── QualityAgent (linting, testing, type checking)
-└── FileExtensionAgent (Map<string, File>)
-```
-
-**Capabilities:**
-- `implement` — Implement features across multiple files
-- `refactor` — Refactor with automatic linting
-- `debug` — Analyze and fix issues
-- `createFeature` — Scaffold → lint → typecheck pipeline
-- `codeReview` — Comprehensive quality analysis
-
 ## Key Patterns
 
-### 1. Subagents via Composition
+### 1. Self-Editing Objects
+
+Objects maintain their own state and can modify themselves:
 
 ```typescript
-class OrchestratorAgent extends BaseAgent {
-    researcher: ResearchAgent;
-    writer: WriterAgent;
+class FileAgent extends Agent {
+    content: string;
 
-    constructor(model: ChatOpenAI) {
-        super(model);
-        this.researcher = new ResearchAgent(model);
-        this.writer = new WriterAgent(model);
+    async edit({ instruction }) {
+        const newContent = await this.agent.invoke(...);
+        this.content = newContent;        // Update self
+        await fs.writeFile(this.path, this.content);  // Persist
     }
 }
 ```
 
-### 2. Shared State
+### 2. Self-Describing State
+
+Objects summarize themselves so orchestrators don't need full context:
 
 ```typescript
-class ParentAgent extends BaseAgent {
-    files: Map<string, FileAgent> = new Map();
-    organizer: OrganizerAgent;
+class FileAgent extends Agent {
+    summary: string;  // "typescript file (45 lines): exports UserService, validateUser"
 
-    constructor(model: ChatOpenAI) {
-        super(model);
-        // Pass shared state to subagents
-        this.organizer = new OrganizerAgent(model, this.files);
+    private async updateSummary() {
+        this.summary = await this.agent.invoke({
+            input: `Summarize: ${this.content.slice(0, 500)}`
+        });
     }
 }
 ```
 
 ### 3. Hook Chains
 
+Cross-cutting concerns without polluting tool logic:
+
 ```typescript
-const validateInput = (input: any) => {
-    if (!input.query) throw new Error("Query required");
-    return input;
-};
-
 const logAccess = (input: any) => {
-    console.log(`[ACCESS] ${JSON.stringify(input)}`);
+    console.log(`[FILE] ${JSON.stringify(input)}`);
     return input;
 };
 
-@Tool({ name: "search", description: "Search the database", parameters: z.object({ query: z.string() }) })
-@Before(validateInput)
-@Before(logAccess)  // Runs after validateInput
-@After(sanitizeOutput)
-search({ query }) { ... }
+@Tool({ name: "write", ... })
+@Before(logAccess)
+@After(updateSummary)
+async write({ content }) { ... }
 ```
 
-## Philosophy
+### 4. Composition Over Configuration
 
-1. **Agents are objects** — State, methods, inheritance, composition all work naturally
-2. **Tools are the unit of work** — Every capability is a tool the LLM can invoke
-3. **Hooks for cross-cutting concerns** — Auth, logging, validation without polluting tool logic
-4. **Subagents via composition** — Build complex systems from simple, testable pieces
-5. **TypeScript-first** — Full type safety with Zod schemas for LLM I/O
+Build complex systems from simple agents:
+
+```typescript
+class SeniorEngineerAgent extends Agent {
+    root: DirectoryAgent;  // Has FileAgents, has more DirectoryAgents...
+
+    constructor(model: ChatOpenAI) {
+        super(model);
+        this.root = new DirectoryAgent(model, "src/");
+    }
+}
+```
 
 ## Getting Started
 
@@ -166,10 +211,10 @@ npm install langchain @langchain/openai zod
 
 ```typescript
 import { ChatOpenAI } from "@langchain/openai";
-import { BaseAgent, Tool, Before } from "./agent-interface";
+import { Agent, Tool } from "./agent-interface";
 import { z } from "zod";
 
-class MyAgent extends BaseAgent {
+class MyAgent extends Agent {
     @Tool({ name: "greet", description: "Greet a user", parameters: z.object({ name: z.string() }) })
     greet({ name }: { name: string }) {
         return `Hello, ${name}!`;
