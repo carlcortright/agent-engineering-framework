@@ -28,6 +28,71 @@ All agents extend `Agent`, which:
 2. Auto-discovers `@Tool` decorated methods
 3. Wires them up as LangChain tools with hooks
 
+## Key Patterns
+
+### 1. Self-Editing Objects that Delegate Responsibilities
+
+Objects maintain their own state and can modify themselves:
+
+```typescript
+class FileAgent extends Agent {
+    content: string;
+
+    async edit({ instruction }) {
+        const newContent = await this.agent.invoke(...);
+        this.content = newContent;        // Update self
+        await fs.writeFile(this.path, this.content);  // Persist
+    }
+}
+```
+
+### 2. Self-Describing State
+
+Objects summarize themselves so orchestrators don't need full context:
+
+```typescript
+class FileAgent extends Agent {
+    summary: string;  // "typescript file (45 lines): exports UserService, validateUser"
+
+    private async updateSummary() {
+        this.summary = await this.agent.invoke({
+            input: `Summarize: ${this.content.slice(0, 500)}`
+        });
+    }
+}
+```
+
+### 3. Hook Chains
+
+Cross-cutting concerns without polluting tool logic:
+
+```typescript
+const logAccess = (input: any) => {
+    console.log(`[FILE] ${JSON.stringify(input)}`);
+    return input;
+};
+
+@Tool({ name: "write", ... })
+@Before(logAccess)
+@After(updateSummary)
+async write({ content }) { ... }
+```
+
+### 4. Composition Over Configuration
+
+Build complex systems from simple agents:
+
+```typescript
+class SeniorEngineerAgent extends Agent {
+    root: DirectoryAgent;  // Has FileAgents, has more DirectoryAgents...
+
+    constructor(model: ChatOpenAI) {
+        super(model);
+        this.root = new DirectoryAgent(model, "src/");
+    }
+}
+```
+
 ## Example: Self-Editing Codebase
 
 The key innovation in this framework is that **objects can edit themselves**. A file agent doesn't just represent a file—it *is* an agent that can rewrite its own content.
@@ -136,71 +201,6 @@ agent-oop/
 │       └── senior-engineer.ts      # SeniorEngineerAgent — orchestrator
 ├── tsconfig.json
 └── package.json
-```
-
-## Key Patterns
-
-### 1. Self-Editing Objects
-
-Objects maintain their own state and can modify themselves:
-
-```typescript
-class FileAgent extends Agent {
-    content: string;
-
-    async edit({ instruction }) {
-        const newContent = await this.agent.invoke(...);
-        this.content = newContent;        // Update self
-        await fs.writeFile(this.path, this.content);  // Persist
-    }
-}
-```
-
-### 2. Self-Describing State
-
-Objects summarize themselves so orchestrators don't need full context:
-
-```typescript
-class FileAgent extends Agent {
-    summary: string;  // "typescript file (45 lines): exports UserService, validateUser"
-
-    private async updateSummary() {
-        this.summary = await this.agent.invoke({
-            input: `Summarize: ${this.content.slice(0, 500)}`
-        });
-    }
-}
-```
-
-### 3. Hook Chains
-
-Cross-cutting concerns without polluting tool logic:
-
-```typescript
-const logAccess = (input: any) => {
-    console.log(`[FILE] ${JSON.stringify(input)}`);
-    return input;
-};
-
-@Tool({ name: "write", ... })
-@Before(logAccess)
-@After(updateSummary)
-async write({ content }) { ... }
-```
-
-### 4. Composition Over Configuration
-
-Build complex systems from simple agents:
-
-```typescript
-class SeniorEngineerAgent extends Agent {
-    root: DirectoryAgent;  // Has FileAgents, has more DirectoryAgents...
-
-    constructor(model: ChatOpenAI) {
-        super(model);
-        this.root = new DirectoryAgent(model, "src/");
-    }
-}
 ```
 
 ## Getting Started
