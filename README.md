@@ -30,7 +30,7 @@ All agents extend `Agent`, which:
 
 ## Key Patterns
 
-### 1. Self-Editing Objects that Delegate Responsibilities
+### 1. Self-Editing Objects That Delegate Responsibilities
 
 Objects maintain their own state and can modify themselves:
 
