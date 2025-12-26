@@ -1,0 +1,302 @@
+import { ChatOpenAI } from "@langchain/openai";
+import { z } from "zod";
+import { Agent, Tool, After } from "../../agent-interface";
+import { FileAgent } from "./file";
+
+// ============================================================================
+// Types
+// ============================================================================
+
+interface DirectoryEntry {
+    type: "file" | "directory";
+    name: string;
+    path: string;
+    summary: string;
+    contents?: DirectoryEntry[];
+}
+
+interface DirectoryListing {
+    path: string;
+    summary: string;
+    contents: DirectoryEntry[];
+}
+
+// ============================================================================
+// Self-Describing Directory Agent
+// ============================================================================
+
+/**
+ * DirectoryAgent is an agent that represents a directory.
+ * It contains files (FileAgents) and subdirectories (DirectoryAgents).
+ * Like files, directories maintain a self-description that updates when contents change.
+ */
+export class DirectoryAgent extends Agent {
+    path: string;
+    files: Map<string, FileAgent> = new Map();
+    directories: Map<string, DirectoryAgent> = new Map();
+    
+    // Self-description: updated when contents change
+    summary: string = "";
+    private model: ChatOpenAI;
+
+    constructor(model: ChatOpenAI, path: string) {
+        super(model);
+        this.model = model;
+        this.path = path.endsWith("/") ? path : path + "/";
+        this.updateSummary();
+    }
+
+    // -------------------------------------------------------------------------
+    // Self-Description System
+    // -------------------------------------------------------------------------
+
+    /**
+     * Update the directory's self-description based on its contents.
+     */
+    private async updateSummary(): Promise<void> {
+        const fileCount = this.files.size;
+        const dirCount = this.directories.size;
+
+        if (fileCount === 0 && dirCount === 0) {
+            this.summary = "Empty directory";
+            return;
+        }
+
+        // Build summary from children's summaries
+        const fileSummaries = Array.from(this.files.entries())
+            .map(([name, file]) => `  ${name}: ${file.summary}`)
+            .join("\n");
+
+        const dirSummaries = Array.from(this.directories.entries())
+            .map(([name, dir]) => `  ${name}/: ${dir.summary}`)
+            .join("\n");
+
+        this.summary = `${fileCount} files, ${dirCount} subdirs`;
+        
+        // For small directories, include more detail
+        if (fileCount + dirCount <= 5) {
+            const details = [fileSummaries, dirSummaries].filter(Boolean).join("\n");
+            if (details) {
+                this.summary += `\n${details}`;
+            }
+        }
+    }
+
+    /**
+     * Get a hierarchical description of this directory and all contents.
+     */
+    getTree(indent: string = ""): string {
+        const lines: string[] = [`${indent}${this.path}`];
+        
+        for (const [name, file] of this.files) {
+            lines.push(`${indent}  📄 ${name} - ${file.summary}`);
+        }
+        
+        for (const [name, dir] of this.directories) {
+            lines.push(dir.getTree(indent + "  "));
+        }
+        
+        return lines.join("\n");
+    }
+
+    // -------------------------------------------------------------------------
+    // Tools - Directory Operations
+    // -------------------------------------------------------------------------
+
+    @Tool({
+        name: "list",
+        description: "List contents of this directory",
+        parameters: z.object({ recursive: z.boolean().optional() }),
+    })
+    list({ recursive = false }: { recursive?: boolean }): DirectoryListing {
+        const files: DirectoryEntry[] = Array.from(this.files.entries()).map(([name, file]) => ({
+            type: "file" as const,
+            name,
+            path: this.path + name,
+            summary: file.summary,
+        }));
+
+        const dirs: DirectoryEntry[] = Array.from(this.directories.entries()).map(([name, dir]) => ({
+            type: "directory" as const,
+            name,
+            path: dir.path,
+            summary: dir.summary,
+            ...(recursive ? { contents: dir.list({ recursive: true }).contents } : {}),
+        }));
+
+        return {
+            path: this.path,
+            summary: this.summary,
+            contents: [...files, ...dirs],
+        };
+    }
+
+    @Tool({
+        name: "describe",
+        description: "Get the directory's self-description",
+        parameters: z.object({}),
+    })
+    describe() {
+        return {
+            path: this.path,
+            summary: this.summary,
+            fileCount: this.files.size,
+            dirCount: this.directories.size,
+            tree: this.getTree(),
+        };
+    }
+
+    @Tool({
+        name: "getFile",
+        description: "Get a file from this directory by name",
+        parameters: z.object({ name: z.string() }),
+    })
+    getFile({ name }: { name: string }): FileAgent | { error: string } {
+        const file = this.files.get(name);
+        if (!file) {
+            return { error: `File not found: ${name}` };
+        }
+        return file;
+    }
+
+    @Tool({
+        name: "getDirectory",
+        description: "Get a subdirectory by name",
+        parameters: z.object({ name: z.string() }),
+    })
+    getDirectory({ name }: { name: string }): DirectoryAgent | { error: string } {
+        const dir = this.directories.get(name);
+        if (!dir) {
+            return { error: `Directory not found: ${name}` };
+        }
+        return dir;
+    }
+
+    @Tool({
+        name: "createFile",
+        description: "Create a new file in this directory",
+        parameters: z.object({
+            name: z.string(),
+            content: z.string().optional(),
+        }),
+    })
+    @After(async function(this: DirectoryAgent, result: any) {
+        await this.updateSummary();
+        return result;
+    })
+    async createFile({ name, content = "" }: { name: string; content?: string }) {
+        if (this.files.has(name)) {
+            return { error: `File already exists: ${name}` };
+        }
+
+        const file = new FileAgent(this.model, this.path + name, content);
+        this.files.set(name, file);
+
+        return {
+            status: "created",
+            path: this.path + name,
+            file: file.describe(),
+        };
+    }
+
+    @Tool({
+        name: "createDirectory",
+        description: "Create a new subdirectory",
+        parameters: z.object({ name: z.string() }),
+    })
+    @After(async function(this: DirectoryAgent, result: any) {
+        await this.updateSummary();
+        return result;
+    })
+    async createDirectory({ name }: { name: string }) {
+        if (this.directories.has(name)) {
+            return { error: `Directory already exists: ${name}` };
+        }
+
+        const dir = new DirectoryAgent(this.model, this.path + name);
+        this.directories.set(name, dir);
+
+        return {
+            status: "created",
+            path: dir.path,
+        };
+    }
+
+    @Tool({
+        name: "deleteFile",
+        description: "Delete a file from this directory",
+        parameters: z.object({ name: z.string() }),
+    })
+    @After(async function(this: DirectoryAgent, result: any) {
+        await this.updateSummary();
+        return result;
+    })
+    async deleteFile({ name }: { name: string }) {
+        if (!this.files.has(name)) {
+            return { error: `File not found: ${name}` };
+        }
+
+        this.files.delete(name);
+
+        return {
+            status: "deleted",
+            path: this.path + name,
+        };
+    }
+
+    @Tool({
+        name: "findFiles",
+        description: "Find files matching a pattern or description",
+        parameters: z.object({
+            pattern: z.string().optional(),
+            description: z.string().optional(),
+        }),
+    })
+    async findFiles({ pattern, description }: { pattern?: string; description?: string }) {
+        const results: { path: string; summary: string }[] = [];
+
+        // Search in current directory
+        for (const [name, file] of this.files) {
+            const matchesPattern = !pattern || new RegExp(pattern, "i").test(name);
+            const matchesDesc = !description || file.summary.toLowerCase().includes(description.toLowerCase());
+
+            if (matchesPattern && matchesDesc) {
+                results.push({ path: file.path, summary: file.summary });
+            }
+        }
+
+        // Search in subdirectories
+        for (const dir of this.directories.values()) {
+            const subResults = await dir.findFiles({ pattern, description });
+            results.push(...(subResults as any).results || []);
+        }
+
+        return { results };
+    }
+
+    @Tool({
+        name: "editFile",
+        description: "Edit a file in this directory by name",
+        parameters: z.object({
+            name: z.string(),
+            instruction: z.string(),
+        }),
+    })
+    @After(async function(this: DirectoryAgent, result: any) {
+        await this.updateSummary();
+        return result;
+    })
+    async editFile({ name, instruction }: { name: string; instruction: string }) {
+        const file = this.files.get(name);
+        if (!file) {
+            return { error: `File not found: ${name}` };
+        }
+
+        // Delegate to the file's self-edit capability
+        return file.edit({ instruction });
+    }
+
+    async execute(input: string) {
+        return this.agent.invoke({ input } as any);
+    }
+}

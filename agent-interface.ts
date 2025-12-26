@@ -7,33 +7,20 @@ import { z, ZodSchema } from "zod";
 // Decorator Metadata Storage
 // ============================================================================
 
-type MiddlewareFn = (data: any) => any | Promise<any>;
-type TaskMeta = { propertyKey: string; name: string; description: string; inputSchema?: ZodSchema; outputSchema?: ZodSchema };
+type HookFn = (data: any) => any | Promise<any>;
 type ToolMeta = { propertyKey: string; name: string; description: string; parameters: ZodSchema };
 
-const taskRegistry = new Map<Function, TaskMeta[]>();
 const toolRegistry = new Map<Function, ToolMeta[]>();
 
-// Middleware stored on the method function itself
-const beforeMiddleware = new WeakMap<Function, MiddlewareFn[]>();
-const afterMiddleware = new WeakMap<Function, MiddlewareFn[]>();
+// Hooks stored on the method function itself
+const beforeHooks = new WeakMap<Function, HookFn[]>();
+const afterHooks = new WeakMap<Function, HookFn[]>();
 
 // ============================================================================
 // Decorators
 // ============================================================================
 
-/** @Task - Agentic subroutine, auto-registered as a tool the LLM can invoke */
-export function Task(config: { name: string; description: string; inputSchema?: ZodSchema; outputSchema?: ZodSchema }) {
-    return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-        const ctor = target.constructor;
-        const tasks = taskRegistry.get(ctor) || [];
-        tasks.push({ propertyKey, ...config });
-        taskRegistry.set(ctor, tasks);
-        return descriptor;
-    };
-}
-
-/** @Tool - Deterministic function callable by the LLM */
+/** @Tool - Function callable by the LLM */
 export function Tool(config: { name: string; description: string; parameters: ZodSchema }) {
     return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
         const ctor = target.constructor;
@@ -44,24 +31,24 @@ export function Tool(config: { name: string; description: string; parameters: Zo
     };
 }
 
-/** @Before - Middleware that runs before a task, can only be applied to @Task methods */
-export function Before(fn: MiddlewareFn) {
+/** @Before - Hook that runs before a tool executes */
+export function Before(fn: HookFn) {
     return function (_target: any, _propertyKey: string, descriptor: PropertyDescriptor) {
         const method = descriptor.value;
-        const existing = beforeMiddleware.get(method) || [];
+        const existing = beforeHooks.get(method) || [];
         existing.push(fn);
-        beforeMiddleware.set(method, existing);
+        beforeHooks.set(method, existing);
         return descriptor;
     };
 }
 
-/** @After - Middleware that runs after a task, can only be applied to @Task methods */
-export function After(fn: MiddlewareFn) {
+/** @After - Hook that runs after a tool executes */
+export function After(fn: HookFn) {
     return function (_target: any, _propertyKey: string, descriptor: PropertyDescriptor) {
         const method = descriptor.value;
-        const existing = afterMiddleware.get(method) || [];
+        const existing = afterHooks.get(method) || [];
         existing.push(fn);
-        afterMiddleware.set(method, existing);
+        afterHooks.set(method, existing);
         return descriptor;
     };
 }
@@ -70,7 +57,7 @@ export function After(fn: MiddlewareFn) {
 // Base Agent
 // ============================================================================
 
-export abstract class BaseAgent {
+export abstract class Agent {
     agent: ReactAgent;
 
     constructor(model: BaseChatModel) {
@@ -81,38 +68,27 @@ export abstract class BaseAgent {
         });
     }
 
-    /** Build LangChain tools from @Tool and @Task decorated methods */
+    /** Build LangChain tools from @Tool decorated methods */
     private buildTools() {
         const toolsMeta = toolRegistry.get(this.constructor) || [];
-        const tasksMeta = taskRegistry.get(this.constructor) || [];
 
-        // Regular tools
-        const tools = toolsMeta.map((meta) =>
-            tool((input: any) => (this as any)[meta.propertyKey].call(this, input), {
-                name: meta.name,
-                description: meta.description,
-                schema: meta.parameters,
-            })
-        );
-
-        // Tasks as tools (wrapped with middleware)
-        const taskTools = tasksMeta.map((meta) => {
+        return toolsMeta.map((meta) => {
             const method = (this as any)[meta.propertyKey];
-            const beforeFns = beforeMiddleware.get(method) || [];
-            const afterFns = afterMiddleware.get(method) || [];
+            const beforeFns = beforeHooks.get(method) || [];
+            const afterFns = afterHooks.get(method) || [];
 
             return tool(
                 async (input: any) => {
-                    // Run @Before middleware
+                    // Run @Before hooks
                     let processed = input;
                     for (const fn of beforeFns) {
                         processed = await fn(processed);
                     }
 
-                    // Run the task
+                    // Run the tool
                     const result = await method.call(this, processed);
 
-                    // Run @After middleware
+                    // Run @After hooks
                     let output = result;
                     for (const fn of afterFns) {
                         output = await fn(output);
@@ -122,14 +98,15 @@ export abstract class BaseAgent {
                 },
                 {
                     name: meta.name,
-                    description: `[Task] ${meta.description}`,
-                    schema: meta.inputSchema ?? z.object({ input: z.string() }),
+                    description: meta.description,
+                    schema: meta.parameters,
                 }
             );
         });
-
-        return [...tools, ...taskTools];
     }
 
     abstract execute(input: string): Promise<any>;
 }
+
+// Alias for backwards compatibility
+export { Agent as BaseAgent };

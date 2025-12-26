@@ -1,6 +1,6 @@
-# Agent OOP
+# Agent Engineering Framework
 
-An object-oriented framework for building production-grade AI agents in TypeScript.
+A polymorphic framework for building production-grade AI agents in TypeScript.
 
 ## The Problem
 
@@ -9,7 +9,7 @@ Existing agent frameworks like LangChain, CrewAI, and others either:
 - Are too high-level (CrewAI) — opinionated abstractions that don't fit real engineering workflows
 - Lack proper boundaries — agents become spaghetti when you need 100s of them at scale
 
-**Agent OOP** takes an object-oriented approach: agents are classes with decorated methods that automatically wire up to the underlying LLM.
+**Agent Engineering** takes an object-oriented approach: agents are classes with decorated methods that automatically wire up to the underlying LLM.
 
 ## Core Concepts
 
@@ -17,31 +17,29 @@ Existing agent frameworks like LangChain, CrewAI, and others either:
 
 | Decorator | Purpose |
 |-----------|---------|
-| `@Task` | Non-deterministic agentic subroutine. Auto-registered as a tool the LLM can invoke. Supports middleware. |
-| `@Tool` | Deterministic function callable by the LLM. Pure functions, no AI involved. |
-| `@Before` | Middleware that runs before a task (validation, logging, transformation). |
-| `@After` | Middleware that runs after a task (sanitization, formatting). |
+| `@Tool` | Function callable by the LLM. Auto-registered and wired up. |
+| `@Before` | Hook that runs before a tool executes (validation, logging, transformation). |
+| `@After` | Hook that runs after a tool executes (sanitization, formatting). |
 
 ### BaseAgent
 
 All agents extend `BaseAgent`, which:
 1. Takes a model in the constructor
-2. Auto-discovers `@Task` and `@Tool` decorated methods
-3. Wires them up as LangChain tools
-4. Runs middleware pipelines around tasks
+2. Auto-discovers `@Tool` decorated methods
+3. Wires them up as LangChain tools with hooks
 
 ```typescript
-class MyAgent extends BaseAgent {
+class MyAgent extends Agent {
     @Tool({ name: "search", description: "Search docs", parameters: z.object({ q: z.string() }) })
-    search({ q }: { q: string }) {
-        return db.search(q);  // Deterministic
-    }
-
-    @Task({ name: "analyze", description: "Analyze data", inputSchema: z.object({ data: z.string() }) })
     @Before(validateInput)
     @After(sanitizeOutput)
+    search({ q }: { q: string }) {
+        return db.search(q);
+    }
+
+    @Tool({ name: "analyze", description: "Analyze data", parameters: z.object({ data: z.string() }) })
     async analyze({ data }: { data: string }) {
-        return this.agent.invoke({ input: `Analyze: ${data}` } as any);  // Non-deterministic
+        return this.agent.invoke({ input: `Analyze: ${data}` } as any);
     }
 
     async execute(input: string) {
@@ -54,7 +52,7 @@ class MyAgent extends BaseAgent {
 
 ```
 agent-oop/
-├── agent-interface.ts         # Core framework: BaseAgent, decorators
+├── agent-interface.ts         # Core framework: BaseAgent, @Tool, @Before, @After
 ├── examples/
 │   ├── cypherpunk-library.ts  # Example: hierarchical agents (Library → Books → Pages)
 │   └── codebase.ts            # Example: coding agents (Files, Organizer, Quality, SuperCoder)
@@ -78,7 +76,7 @@ CypherpunkLibrary (orchestrator)
 **Capabilities:**
 - `searchAll` — Search across all books
 - `askLibrarian` — Route questions to specialist librarians
-- `addBook` — Create new books (with auth middleware)
+- `addBook` — Create new books (with auth hooks)
 - Books can `summarize`, `search`, `writePage`
 - Pages can `write`, `edit`, `getContent`
 
@@ -132,7 +130,7 @@ class ParentAgent extends BaseAgent {
 }
 ```
 
-### 3. Middleware Chains
+### 3. Hook Chains
 
 ```typescript
 const validateInput = (input: any) => {
@@ -145,30 +143,18 @@ const logAccess = (input: any) => {
     return input;
 };
 
-@Task({ name: "search", ... })
+@Tool({ name: "search", description: "Search the database", parameters: z.object({ query: z.string() }) })
 @Before(validateInput)
 @Before(logAccess)  // Runs after validateInput
 @After(sanitizeOutput)
-async search({ query }) { ... }
-```
-
-### 4. Tasks as Tools
-
-Tasks are automatically registered as tools, so the LLM can invoke them:
-
-```typescript
-// This becomes a tool called "research" that the agent can call
-@Task({ name: "research", description: "Deep research", inputSchema: z.object({ topic: z.string() }) })
-async research({ topic }) {
-    // Agentic logic here
-}
+search({ query }) { ... }
 ```
 
 ## Philosophy
 
 1. **Agents are objects** — State, methods, inheritance, composition all work naturally
-2. **Tools are pure, Tasks are agentic** — Clear distinction between deterministic and non-deterministic code
-3. **Middleware for cross-cutting concerns** — Auth, logging, validation without polluting task logic
+2. **Tools are the unit of work** — Every capability is a tool the LLM can invoke
+3. **Hooks for cross-cutting concerns** — Auth, logging, validation without polluting tool logic
 4. **Subagents via composition** — Build complex systems from simple, testable pieces
 5. **TypeScript-first** — Full type safety with Zod schemas for LLM I/O
 
@@ -180,12 +166,13 @@ npm install langchain @langchain/openai zod
 
 ```typescript
 import { ChatOpenAI } from "@langchain/openai";
-import { BaseAgent, Task, Tool, Before } from "./agent-interface";
+import { BaseAgent, Tool, Before } from "./agent-interface";
+import { z } from "zod";
 
 class MyAgent extends BaseAgent {
-    @Task({ name: "greet", description: "Greet a user", inputSchema: z.object({ name: z.string() }) })
-    async greet({ name }: { name: string }) {
-        return this.agent.invoke({ input: `Say hello to ${name}` } as any);
+    @Tool({ name: "greet", description: "Greet a user", parameters: z.object({ name: z.string() }) })
+    greet({ name }: { name: string }) {
+        return `Hello, ${name}!`;
     }
 
     async execute(input: string) {
@@ -195,7 +182,6 @@ class MyAgent extends BaseAgent {
 
 const model = new ChatOpenAI({ modelName: "gpt-4o" });
 const agent = new MyAgent(model);
-await agent.greet({ name: "World" });
 ```
 
 ## License
