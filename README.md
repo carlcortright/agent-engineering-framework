@@ -30,9 +30,9 @@ All agents extend `Agent`, which:
 
 ## Key Patterns
 
-### 1. Self-Editing Objects That Delegate Responsibilities
+### 1. Self-Editing Objects
 
-Objects maintain their own state and can modify themselves:
+Objects maintain their own state and can modify themselves, creating responsible boundaries and preventing spaghetti:
 
 ```typescript
 class FileAgent extends Agent {
