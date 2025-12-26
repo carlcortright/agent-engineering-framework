@@ -68,9 +68,9 @@ export abstract class Agent {
         });
     }
 
-    /** Build LangChain tools from @Tool decorated methods */
+    /** Build LangChain tools from @Tool decorated methods (including inherited) */
     private buildTools() {
-        const toolsMeta = toolRegistry.get(this.constructor) || [];
+        const toolsMeta = this.collectToolsFromPrototypeChain();
 
         return toolsMeta.map((meta) => {
             const method = (this as any)[meta.propertyKey];
@@ -103,6 +103,26 @@ export abstract class Agent {
                 }
             );
         });
+    }
+
+    /** Collect tools from this class and all parent classes */
+    private collectToolsFromPrototypeChain(): ToolMeta[] {
+        const allTools: ToolMeta[] = [];
+        const seen = new Set<string>();  // Dedupe by tool name (child overrides parent)
+
+        let current: Function | null = this.constructor;
+        while (current && current !== Function.prototype) {
+            const tools = toolRegistry.get(current) || [];
+            for (const tool of tools) {
+                if (!seen.has(tool.name)) {
+                    seen.add(tool.name);
+                    allTools.push(tool);
+                }
+            }
+            current = Object.getPrototypeOf(current);
+        }
+
+        return allTools;
     }
 
     abstract execute(input: string): Promise<any>;
