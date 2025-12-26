@@ -229,6 +229,11 @@ const model = new ChatOpenAI({ modelName: "gpt-4o" });
 const agent = new MyAgent(model);
 ```
 
+## TODO
+
+- [ ] Agent state persistence 
+- [ ] Human-in-the-loop tooling
+
 ## License
 
 MIT
