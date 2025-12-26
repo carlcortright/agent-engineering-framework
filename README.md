@@ -93,6 +93,86 @@ class SeniorEngineerAgent extends Agent {
 }
 ```
 
+### 5. Subagents as Members
+
+Subagents are just properties on the parent agent—no special registration or configuration:
+
+```typescript
+class EngineeringTeam extends Agent {
+    // Subagents are member variables
+    seniorEngineer: SeniorEngineerAgent;
+    qaEngineer: QAEngineerAgent;
+    designer: DesignAgent;
+
+    constructor(model: ChatOpenAI) {
+        super(model);
+        this.seniorEngineer = new SeniorEngineerAgent(model);
+        this.qaEngineer = new QAEngineerAgent(model);
+        this.designer = new DesignAgent(model);
+    }
+
+    @Tool({
+        name: "buildFeature",
+        description: "Build a complete feature with design, implementation, and QA",
+        parameters: z.object({ spec: z.string() }),
+    })
+    async buildFeature({ spec }) {
+        const design = await this.designer.createDesign({ spec });
+        const code = await this.seniorEngineer.implement({ feature: spec, design });
+        const tests = await this.qaEngineer.writeTests({ code });
+        return { design, code, tests };
+    }
+}
+```
+
+This makes agent hierarchies explicit and inspectable—no magic, just objects.
+
+### 6. Tool Inheritance via Extension
+
+Extend agents to compose capabilities. Children inherit all `@Tool` methods from parents:
+
+```typescript
+// Base agent with search capability
+class SearchableAgent extends Agent {
+    @Tool({
+        name: "search",
+        description: "Search for information",
+        parameters: z.object({ query: z.string() }),
+    })
+    async search({ query }: { query: string }) {
+        return this.searchIndex.query(query);
+    }
+}
+
+// Research agent inherits search, adds its own tools
+class ResearchAgent extends SearchableAgent {
+    @Tool({
+        name: "synthesize",
+        description: "Synthesize findings into a report",
+        parameters: z.object({ topic: z.string() }),
+    })
+    async synthesize({ topic }) {
+        const results = await this.search({ query: topic });  // Use inherited tool
+        return this.agent.invoke({ input: `Synthesize: ${results}` } as any);
+    }
+}
+
+// Documentation agent also inherits search
+class DocumentationAgent extends SearchableAgent {
+    @Tool({
+        name: "generateDocs",
+        description: "Generate documentation for code",
+        parameters: z.object({ code: z.string() }),
+    })
+    async generateDocs({ code }) {
+        const examples = await this.search({ query: `examples ${code}` });
+        return this.agent.invoke({ input: `Document with examples: ${examples}` } as any);
+    }
+}
+```
+
+Build capability mixins through inheritance—search, persistence, logging, etc.
+
 ## Example: Self-Editing Codebase
 
 The key innovation in this framework is that **objects can edit themselves**. A file agent doesn't just represent a file—it *is* an agent that can rewrite its own content.
