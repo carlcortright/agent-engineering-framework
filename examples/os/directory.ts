@@ -1,5 +1,7 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { z } from "zod";
+import * as fs from "fs";
+import * as path from "path";
 import { Agent, Tool, After } from "../../agent-interface";
 import { FileAgent } from "./file";
 
@@ -39,11 +41,51 @@ export class DirectoryAgent extends Agent {
     summary: string = "";
     private model: ChatOpenAI;
 
-    constructor(model: ChatOpenAI, path: string) {
+    constructor(model: ChatOpenAI, dirPath: string, autoLoad: boolean = true) {
         super(model);
         this.model = model;
-        this.path = path.endsWith("/") ? path : path + "/";
+        this.path = dirPath.endsWith("/") ? dirPath : dirPath + "/";
+        
+        if (autoLoad) {
+            this.loadFromFilesystem();
+        }
         this.updateSummary();
+    }
+
+    /**
+     * Load files and directories from the actual filesystem.
+     */
+    private loadFromFilesystem(): void {
+        const absolutePath = path.resolve(this.path);
+        
+        if (!fs.existsSync(absolutePath)) {
+            console.log(`Directory does not exist: ${absolutePath}`);
+            return;
+        }
+
+        const entries = fs.readdirSync(absolutePath, { withFileTypes: true });
+
+        for (const entry of entries) {
+            // Skip hidden files and common ignore patterns
+            if (entry.name.startsWith(".") || entry.name === "node_modules") {
+                continue;
+            }
+
+            const fullPath = path.join(absolutePath, entry.name);
+
+            if (entry.isDirectory()) {
+                const subDir = new DirectoryAgent(this.model, fullPath, true);
+                this.directories.set(entry.name, subDir);
+            } else if (entry.isFile()) {
+                try {
+                    const content = fs.readFileSync(fullPath, "utf-8");
+                    const file = new FileAgent(this.model, fullPath, content);
+                    this.files.set(entry.name, file);
+                } catch (err) {
+                    // Skip files that can't be read (binary, etc.)
+                }
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -102,6 +144,24 @@ export class DirectoryAgent extends Agent {
     // -------------------------------------------------------------------------
     // Tools - Directory Operations
     // -------------------------------------------------------------------------
+
+    @Tool({
+        name: "reload",
+        description: "Reload directory contents from the filesystem",
+        parameters: z.object({}),
+    })
+    reload() {
+        this.files.clear();
+        this.directories.clear();
+        this.loadFromFilesystem();
+        this.updateSummary();
+        return {
+            status: "reloaded",
+            path: this.path,
+            fileCount: this.files.size,
+            dirCount: this.directories.size,
+        };
+    }
 
     @Tool({
         name: "list",
@@ -213,7 +273,8 @@ export class DirectoryAgent extends Agent {
             return { error: `Directory already exists: ${name}` };
         }
 
-        const dir = new DirectoryAgent(this.model, this.path + name);
+        // Create new directory without auto-loading (it's empty)
+        const dir = new DirectoryAgent(this.model, this.path + name, false);
         this.directories.set(name, dir);
 
         return {
@@ -297,6 +358,8 @@ export class DirectoryAgent extends Agent {
     }
 
     async execute(input: string) {
-        return this.agent.invoke({ input } as any);
+        return this.agent.invoke({
+            messages: [{ role: "human", content: input }],
+        });
     }
 }

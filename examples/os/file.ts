@@ -202,8 +202,12 @@ ${this.content.slice(0, 2000)}${this.content.length > 2000 ? "\n// ... truncated
         parameters: z.object({ instruction: z.string() }),
     })
     async edit({ instruction }: { instruction: string }) {
-        const result = await this.agent.invoke({
-            input: `You are editing the file "${this.path}" (${this.language}).
+        console.log(`📝 [FileAgent] Editing ${this.path}`);
+        console.log(`   Instruction: ${instruction.slice(0, 60)}...`);
+        
+        try {
+            const result = await this.agent.invoke({
+                messages: [{ role: "human", content: `You are editing the file "${this.path}" (${this.language}).
 
 Current content:
 \`\`\`${this.language}
@@ -212,30 +216,42 @@ ${this.content}
 
 Instruction: ${instruction}
 
-Return ONLY the complete new file content. No explanations, no markdown fences.`
-        } as any);
+Return ONLY the complete new file content. No explanations, no markdown fences.` }],
+            });
 
-        const newContent = String(result).trim();
-        
-        // Self-edit: update our own content
-        const oldLines = this.content.split("\n").length;
-        this.content = newContent;
-        this.lastModified = new Date();
+            // Extract the response content
+            const lastMessage = result.messages[result.messages.length - 1];
+            const newContent = (typeof lastMessage?.content === "string" ? lastMessage.content : "").trim();
+            
+            if (!newContent) {
+                console.log(`   ⚠️ Empty response from LLM`);
+                return { error: "Empty response from LLM", path: this.path };
+            }
+            
+            // Self-edit: update our own content
+            const oldLines = this.content.split("\n").length;
+            this.content = newContent;
+            this.lastModified = new Date();
 
-        // Write to filesystem
-        await this.writeToDisk();
-        
-        // Update self-description after edit
-        await this.updateSummary();
+            // Write to filesystem
+            await this.writeToDisk();
+            console.log(`   ✅ Wrote ${newContent.split("\n").length} lines to disk`);
+            
+            // Update self-description after edit
+            await this.updateSummary();
 
-        return {
-            path: this.path,
-            status: "self-edited",
-            instruction,
-            oldLines,
-            newLines: newContent.split("\n").length,
-            newSummary: this.summary,
-        };
+            return {
+                path: this.path,
+                status: "self-edited",
+                instruction,
+                oldLines,
+                newLines: newContent.split("\n").length,
+                newSummary: this.summary,
+            };
+        } catch (err: any) {
+            console.log(`   ❌ Error editing file: ${err.message}`);
+            return { error: err.message, path: this.path };
+        }
     }
 
     @Tool({
@@ -245,16 +261,19 @@ Return ONLY the complete new file content. No explanations, no markdown fences.`
     })
     async analyze({ focus }: { focus?: string }) {
         const result = await this.agent.invoke({
-            input: `Analyze this ${this.language} file:
+            messages: [{ role: "human", content: `Analyze this ${this.language} file:
 \`\`\`${this.language}
 ${this.content}
 \`\`\`
-${focus ? `Focus on: ${focus}` : "Provide general analysis: issues, improvements, patterns."}`
-        } as any);
+${focus ? `Focus on: ${focus}` : "Provide general analysis: issues, improvements, patterns."}` }],
+        });
+
+        const lastMessage = result.messages[result.messages.length - 1];
+        const analysis = typeof lastMessage?.content === "string" ? lastMessage.content : "";
 
         return {
             path: this.path,
-            analysis: result,
+            analysis,
         };
     }
 
@@ -275,6 +294,8 @@ ${focus ? `Focus on: ${focus}` : "Provide general analysis: issues, improvements
     }
 
     async execute(input: string) {
-        return this.agent.invoke({ input } as any);
+        return this.agent.invoke({
+            messages: [{ role: "human", content: input }],
+        });
     }
 }
