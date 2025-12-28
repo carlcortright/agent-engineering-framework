@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Agent, Tool, Before, After } from "../../agent-interface";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { fileLog as log } from "../utils/logger";
 
 // ============================================================================
 // Self-Describing File Agent
@@ -202,8 +203,7 @@ ${this.content.slice(0, 2000)}${this.content.length > 2000 ? "\n// ... truncated
         parameters: z.object({ instruction: z.string() }),
     })
     async edit({ instruction }: { instruction: string }) {
-        console.log(`📝 [FileAgent] Editing ${this.path}`);
-        console.log(`   Instruction: ${instruction.slice(0, 60)}...`);
+        log.tool("edit", { path: this.path, instruction: instruction.slice(0, 50) });
         
         try {
             const result = await this.agent.invoke({
@@ -224,7 +224,7 @@ Return ONLY the complete new file content. No explanations, no markdown fences.`
             const newContent = (typeof lastMessage?.content === "string" ? lastMessage.content : "").trim();
             
             if (!newContent) {
-                console.log(`   ⚠️ Empty response from LLM`);
+                log.error("edit", "Empty response from LLM");
                 return { error: "Empty response from LLM", path: this.path };
             }
             
@@ -235,11 +235,12 @@ Return ONLY the complete new file content. No explanations, no markdown fences.`
 
             // Write to filesystem
             await this.writeToDisk();
-            console.log(`   ✅ Wrote ${newContent.split("\n").length} lines to disk`);
+            log.step(`Wrote ${newContent.split("\n").length} lines to disk`);
             
             // Update self-description after edit
             await this.updateSummary();
 
+            log.success("edit", this.path);
             return {
                 path: this.path,
                 status: "self-edited",
@@ -249,7 +250,7 @@ Return ONLY the complete new file content. No explanations, no markdown fences.`
                 newSummary: this.summary,
             };
         } catch (err: any) {
-            console.log(`   ❌ Error editing file: ${err.message}`);
+            log.error("edit", err);
             return { error: err.message, path: this.path };
         }
     }

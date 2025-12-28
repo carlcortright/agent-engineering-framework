@@ -4,39 +4,7 @@ import * as fs from "fs";
 import * as nodePath from "path";
 import { Agent, Tool, After } from "../../agent-interface";
 import { FileAgent } from "./file";
-
-// ============================================================================
-// Logging
-// ============================================================================
-
-const COLORS = {
-    reset: "\x1b[0m",
-    dim: "\x1b[2m",
-    cyan: "\x1b[36m",
-    green: "\x1b[32m",
-    yellow: "\x1b[33m",
-    magenta: "\x1b[35m",
-    red: "\x1b[31m",
-};
-
-const log = {
-    tool: (name: string, input: any) => {
-        const inputStr = JSON.stringify(input);
-        const truncated = inputStr.length > 80 ? inputStr.slice(0, 80) + "..." : inputStr;
-        console.log(`${COLORS.cyan}▶ [Dir] ${name}${COLORS.reset} ${COLORS.dim}${truncated}${COLORS.reset}`);
-    },
-    success: (name: string, result: any) => {
-        const resultStr = typeof result === "string" ? result : JSON.stringify(result);
-        const truncated = resultStr.length > 100 ? resultStr.slice(0, 100) + "..." : resultStr;
-        console.log(`${COLORS.green}✓ [Dir] ${name}${COLORS.reset} ${COLORS.dim}${truncated}${COLORS.reset}`);
-    },
-    error: (name: string, err: any) => {
-        console.log(`${COLORS.red}✗ [Dir] ${name}${COLORS.reset} ${err}`);
-    },
-    step: (msg: string) => {
-        console.log(`${COLORS.magenta}  → ${msg}${COLORS.reset}`);
-    },
-};
+import { directoryLog as log } from "../utils/logger";
 
 // ============================================================================
 // Types

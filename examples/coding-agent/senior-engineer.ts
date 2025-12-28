@@ -3,48 +3,7 @@ import { z } from "zod";
 import { BaseAgent, Tool } from "../../agent-interface";
 import { DirectoryAgent } from "../os/directory";
 import { FileAgent } from "../os/file";
-
-// ============================================================================
-// Logging
-// ============================================================================
-
-const COLORS = {
-    reset: "\x1b[0m",
-    dim: "\x1b[2m",
-    cyan: "\x1b[36m",
-    green: "\x1b[32m",
-    yellow: "\x1b[33m",
-    magenta: "\x1b[35m",
-    red: "\x1b[31m",
-};
-
-const log = {
-    tool: (name: string, input: any) => {
-        const inputStr = JSON.stringify(input);
-        const truncated = inputStr.length > 80 ? inputStr.slice(0, 80) + "..." : inputStr;
-        console.log(`${COLORS.cyan}▶ ${name}${COLORS.reset} ${COLORS.dim}${truncated}${COLORS.reset}`);
-    },
-    success: (name: string, result: any) => {
-        const resultStr = typeof result === "string" ? result : JSON.stringify(result);
-        const truncated = resultStr.length > 100 ? resultStr.slice(0, 100) + "..." : resultStr;
-        console.log(`${COLORS.green}✓ ${name}${COLORS.reset} ${COLORS.dim}${truncated}${COLORS.reset}\n`);
-    },
-    error: (name: string, err: any) => {
-        console.log(`${COLORS.red}✗ ${name}${COLORS.reset} ${err.message || err}\n`);
-    },
-    info: (msg: string) => {
-        console.log(`${COLORS.yellow}ℹ ${msg}${COLORS.reset}`);
-    },
-    step: (msg: string) => {
-        console.log(`${COLORS.magenta}  → ${msg}${COLORS.reset}`);
-    },
-};
-
-/** Extract the last message content from an agent result */
-function getResponseContent(result: { messages: any[] }): string {
-    const lastMessage = result.messages[result.messages.length - 1];
-    return typeof lastMessage?.content === "string" ? lastMessage.content : "";
-}
+import { engineerLog as log, getResponseContent } from "../utils/logger";
 
 // ============================================================================
 // Senior Engineer Agent
