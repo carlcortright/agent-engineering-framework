@@ -141,28 +141,49 @@ async function main() {
     const agent = selected.create(model, collectedArgs);
     console.log(c("green", `  ✓ ${selected.name} ready!\n`));
 
-    // 2. Get input
-    console.log(c("dim", "  ─────────────────────────────────────────\n"));
-    const input = await prompt(rl, c("cyan", "  Enter your request: "));
+    // 2. REPL loop - keep accepting commands
+    console.log(c("dim", "  ─────────────────────────────────────────"));
+    console.log(c("dim", "  Type 'exit' or 'quit' to exit, 'clear' to clear screen\n"));
 
-    if (!input) {
-        console.log(c("red", "\n  ✗ No input provided.\n"));
-        rl.close();
-        process.exit(1);
-    }
+    while (true) {
+        const input = await prompt(rl, c("cyan", "  > "));
 
-    // 3. Execute
-    console.log(c("dim", "\n  ⏳ Executing...\n"));
+        // Handle special commands
+        if (!input) {
+            continue;
+        }
 
-    try {
-        const result = await agent.execute(input);
-        console.log(c("green", "  ✓ Result:\n"));
-        prettyPrint(result);
-        console.log();
-    } catch (error: any) {
-        console.log(c("red", `\n  ✗ Error: ${error.message}\n`));
-        rl.close();
-        process.exit(1);
+        if (input.toLowerCase() === "exit" || input.toLowerCase() === "quit" || input.toLowerCase() === "q") {
+            console.log(c("dim", "\n  Goodbye! 👋\n"));
+            break;
+        }
+
+        if (input.toLowerCase() === "clear" || input.toLowerCase() === "cls") {
+            printHeader();
+            console.log(c("green", `  🤖 ${selected.name}\n`));
+            console.log(c("dim", "  ─────────────────────────────────────────\n"));
+            continue;
+        }
+
+        if (input.toLowerCase() === "help") {
+            console.log(c("dim", "\n  Commands:"));
+            console.log(c("dim", "    exit, quit, q  - Exit the CLI"));
+            console.log(c("dim", "    clear, cls     - Clear the screen"));
+            console.log(c("dim", "    help           - Show this help\n"));
+            continue;
+        }
+
+        // Execute the agent command
+        console.log(c("dim", "\n  ⏳ Executing...\n"));
+
+        try {
+            const result = await agent.execute(input);
+            console.log(c("green", "  ✓ Result:\n"));
+            prettyPrint(result);
+            console.log();
+        } catch (error: any) {
+            console.log(c("red", `\n  ✗ Error: ${error.message}\n`));
+        }
     }
 
     rl.close();

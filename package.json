@@ -1,10 +1,10 @@
 {
-  "name": "agent-oop",
-  "version": "1.0.0",
+  "name": "agent-engineering-framework",
+  "version": "0.0.1",
   "main": "index.js",
   "license": "MIT",
   "scripts": {
-    "cli": "tsx examples/cli.ts"
+    "cli": "tsx agents/cli.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.1.8",
