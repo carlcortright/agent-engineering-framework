@@ -208,20 +208,54 @@ Return ONLY a JSON array of file paths that are relevant, e.g. ["src/utils.ts", 
         return result;
     }
 
-    private findFile(path: string): FileAgent | null {
-        const parts = path.split("/");
-        const fileName = parts.pop()!;
+    private findFile(filePath: string): FileAgent | null {
+        // Normalize the path - strip root path prefix if present
+        let normalizedPath = filePath;
+        const rootPath = this.root.path.replace(/\/$/, "");
         
+        if (filePath.startsWith(rootPath)) {
+            normalizedPath = filePath.slice(rootPath.length).replace(/^\//, "");
+        }
+        
+        // Also try stripping any leading path components that match the root
+        if (filePath.startsWith("/")) {
+            // Absolute path - try to find the relative portion
+            const rootName = rootPath.split("/").pop() || "";
+            const pathParts = filePath.split("/");
+            const rootIndex = pathParts.indexOf(rootName);
+            if (rootIndex !== -1) {
+                normalizedPath = pathParts.slice(rootIndex + 1).join("/");
+            }
+        }
+
+        log.step(`Looking for file: "${normalizedPath}" (original: "${filePath}")`);
+
+        const parts = normalizedPath.split("/").filter(Boolean);
+        const fileName = parts.pop();
+        
+        if (!fileName) {
+            log.step(`  No filename in path`);
+            return null;
+        }
+
         let currentDir = this.root;
         for (const dirName of parts) {
-            if (dirName === this.root.path.replace(/\/$/, "").split("/").pop()) continue;
-            
             const subdir = currentDir.directories.get(dirName);
-            if (!subdir) return null;
+            if (!subdir) {
+                log.step(`  Directory not found: "${dirName}" in ${currentDir.path}`);
+                log.step(`  Available dirs: ${Array.from(currentDir.directories.keys()).join(", ") || "(none)"}`);
+                return null;
+            }
             currentDir = subdir;
         }
 
-        return currentDir.files.get(fileName) || null;
+        const file = currentDir.files.get(fileName);
+        if (!file) {
+            log.step(`  File not found: "${fileName}" in ${currentDir.path}`);
+            log.step(`  Available files: ${Array.from(currentDir.files.keys()).join(", ") || "(none)"}`);
+        }
+        
+        return file || null;
     }
 
     @Tool({

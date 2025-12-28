@@ -1,9 +1,42 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { z } from "zod";
 import * as fs from "fs";
-import * as path from "path";
+import * as nodePath from "path";
 import { Agent, Tool, After } from "../../agent-interface";
 import { FileAgent } from "./file";
+
+// ============================================================================
+// Logging
+// ============================================================================
+
+const COLORS = {
+    reset: "\x1b[0m",
+    dim: "\x1b[2m",
+    cyan: "\x1b[36m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
+    magenta: "\x1b[35m",
+    red: "\x1b[31m",
+};
+
+const log = {
+    tool: (name: string, input: any) => {
+        const inputStr = JSON.stringify(input);
+        const truncated = inputStr.length > 80 ? inputStr.slice(0, 80) + "..." : inputStr;
+        console.log(`${COLORS.cyan}▶ [Dir] ${name}${COLORS.reset} ${COLORS.dim}${truncated}${COLORS.reset}`);
+    },
+    success: (name: string, result: any) => {
+        const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+        const truncated = resultStr.length > 100 ? resultStr.slice(0, 100) + "..." : resultStr;
+        console.log(`${COLORS.green}✓ [Dir] ${name}${COLORS.reset} ${COLORS.dim}${truncated}${COLORS.reset}`);
+    },
+    error: (name: string, err: any) => {
+        console.log(`${COLORS.red}✗ [Dir] ${name}${COLORS.reset} ${err}`);
+    },
+    step: (msg: string) => {
+        console.log(`${COLORS.magenta}  → ${msg}${COLORS.reset}`);
+    },
+};
 
 // ============================================================================
 // Types
@@ -56,14 +89,15 @@ export class DirectoryAgent extends Agent {
      * Load files and directories from the actual filesystem.
      */
     private loadFromFilesystem(): void {
-        const absolutePath = path.resolve(this.path);
+        const absolutePath = nodePath.resolve(this.path);
         
         if (!fs.existsSync(absolutePath)) {
-            console.log(`Directory does not exist: ${absolutePath}`);
+            log.error("loadFromFilesystem", `Directory does not exist: ${absolutePath}`);
             return;
         }
 
         const entries = fs.readdirSync(absolutePath, { withFileTypes: true });
+        log.step(`Loading ${entries.length} entries from ${absolutePath}`);
 
         for (const entry of entries) {
             // Skip hidden files and common ignore patterns
@@ -71,7 +105,7 @@ export class DirectoryAgent extends Agent {
                 continue;
             }
 
-            const fullPath = path.join(absolutePath, entry.name);
+            const fullPath = nodePath.join(absolutePath, entry.name);
 
             if (entry.isDirectory()) {
                 const subDir = new DirectoryAgent(this.model, fullPath, true);
@@ -86,6 +120,8 @@ export class DirectoryAgent extends Agent {
                 }
             }
         }
+        
+        log.success("loadFromFilesystem", `Loaded ${this.files.size} files, ${this.directories.size} dirs`);
     }
 
     // -------------------------------------------------------------------------
@@ -151,16 +187,19 @@ export class DirectoryAgent extends Agent {
         parameters: z.object({}),
     })
     reload() {
+        log.tool("reload", { path: this.path });
         this.files.clear();
         this.directories.clear();
         this.loadFromFilesystem();
         this.updateSummary();
-        return {
+        const result = {
             status: "reloaded",
             path: this.path,
             fileCount: this.files.size,
             dirCount: this.directories.size,
         };
+        log.success("reload", `${result.fileCount} files, ${result.dirCount} dirs`);
+        return result;
     }
 
     @Tool({
@@ -208,14 +247,24 @@ export class DirectoryAgent extends Agent {
 
     @Tool({
         name: "getFile",
-        description: "Get a file from this directory by name",
-        parameters: z.object({ name: z.string() }),
+        description: "Get a file from this directory by name or path",
+        parameters: z.object({ name: z.string().describe("File name or relative path") }),
     })
     getFile({ name }: { name: string }): FileAgent | { error: string } {
-        const file = this.files.get(name);
+        log.tool("getFile", { name });
+        
+        // Try direct lookup first, then path-based lookup
+        let file = this.files.get(name);
         if (!file) {
+            file = this.findFileByPath(name);
+        }
+        
+        if (!file) {
+            log.error("getFile", `File not found: ${name}`);
             return { error: `File not found: ${name}` };
         }
+        
+        log.success("getFile", file.path);
         return file;
     }
 
@@ -245,16 +294,21 @@ export class DirectoryAgent extends Agent {
         return result;
     })
     async createFile({ name, content = "" }: { name: string; content?: string }) {
+        log.tool("createFile", { name, contentLength: content.length });
+        
         if (this.files.has(name)) {
+            log.error("createFile", `File already exists: ${name}`);
             return { error: `File already exists: ${name}` };
         }
 
-        const file = new FileAgent(this.model, this.path + name, content);
+        const filePath = nodePath.join(nodePath.resolve(this.path), name);
+        const file = new FileAgent(this.model, filePath, content);
         this.files.set(name, file);
 
+        log.success("createFile", filePath);
         return {
             status: "created",
-            path: this.path + name,
+            path: filePath,
             file: file.describe(),
         };
     }
@@ -335,11 +389,59 @@ export class DirectoryAgent extends Agent {
         return { results };
     }
 
+    /**
+     * Find a file by path, handling both simple names and paths with subdirectories.
+     */
+    findFileByPath(filePath: string): FileAgent | undefined {
+        // Normalize the path
+        let normalizedPath = filePath;
+        
+        // Strip this directory's path prefix if present
+        if (filePath.startsWith(this.path)) {
+            normalizedPath = filePath.slice(this.path.length);
+        }
+        
+        // Handle absolute paths
+        if (filePath.startsWith("/")) {
+            const thisAbsPath = nodePath.resolve(this.path);
+            if (filePath.startsWith(thisAbsPath)) {
+                normalizedPath = filePath.slice(thisAbsPath.length).replace(/^\//, "");
+            }
+        }
+        
+        const parts = normalizedPath.split("/").filter(Boolean);
+        
+        log.step(`findFileByPath: "${filePath}" -> normalized: "${normalizedPath}" -> parts: [${parts.join(", ")}]`);
+        
+        // If it's just a filename, look in current directory
+        if (parts.length === 1) {
+            const file = this.files.get(parts[0]);
+            if (file) {
+                log.step(`  Found file directly: ${file.path}`);
+                return file;
+            }
+            log.step(`  File not found in current dir. Available: ${Array.from(this.files.keys()).join(", ") || "(none)"}`);
+            return undefined;
+        }
+        
+        // Otherwise, navigate to subdirectory
+        const dirName = parts[0];
+        const remainingPath = parts.slice(1).join("/");
+        
+        const subDir = this.directories.get(dirName);
+        if (!subDir) {
+            log.step(`  Subdirectory not found: "${dirName}". Available: ${Array.from(this.directories.keys()).join(", ") || "(none)"}`);
+            return undefined;
+        }
+        
+        return subDir.findFileByPath(remainingPath);
+    }
+
     @Tool({
         name: "editFile",
-        description: "Edit a file in this directory by name",
+        description: "Edit a file in this directory by name or path",
         parameters: z.object({
-            name: z.string(),
+            name: z.string().describe("File name or relative path like 'app/page.tsx'"),
             instruction: z.string(),
         }),
     })
@@ -348,13 +450,23 @@ export class DirectoryAgent extends Agent {
         return result;
     })
     async editFile({ name, instruction }: { name: string; instruction: string }) {
-        const file = this.files.get(name);
+        log.tool("editFile", { name, instruction: instruction.slice(0, 50) });
+        
+        // Try direct lookup first, then path-based lookup
+        let file = this.files.get(name);
         if (!file) {
+            file = this.findFileByPath(name);
+        }
+        
+        if (!file) {
+            log.error("editFile", `File not found: ${name}`);
             return { error: `File not found: ${name}` };
         }
 
         // Delegate to the file's self-edit capability
-        return file.edit({ instruction });
+        const result = await file.edit({ instruction });
+        log.success("editFile", file.path);
+        return result;
     }
 
     async execute(input: string) {
