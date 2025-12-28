@@ -402,36 +402,3 @@ Return as JSON: { rootCause, filesToFix: [{ path, fix }] }` }],
     }
 }
 
-// ============================================================================
-// Usage Example
-// ============================================================================
-
-async function main() {
-    const model = new ChatOpenAI({ modelName: "gpt-4o" });
-    const engineer = new SeniorEngineerAgent(model, "src/");
-
-    // Create initial structure
-    await engineer.createFile({ 
-        path: "src/index.ts", 
-        content: `export function main() {\n    console.log("Hello");\n}` 
-    });
-
-    await engineer.createFile({ 
-        path: "src/utils/helpers.ts", 
-        content: `export const add = (a: number, b: number) => a + b;` 
-    });
-
-    // Understand the codebase
-    console.log(engineer.understand());
-
-    // Implement a feature
-    await engineer.implement({
-        feature: "Add a multiply function to helpers and use it in index.ts"
-    });
-
-    // Check the result
-    console.log("\n📊 Final structure:");
-    console.log(engineer.understand());
-}
-
-// main();
