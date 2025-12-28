@@ -319,6 +319,7 @@ const agent = new MyAgent(model);
 
 - [ ] Agent state persistence layer
 - [ ] Human-in-the-loop tooling
+- [ ] Evals
 
 ## License
 
